@@ -99,6 +99,64 @@ impl Saadc {
         self.0.enable.write(|w| w.enable().disabled());
         self.0
     }
+
+
+    /// Sample channel `PIN` for the configured ADC acquisition time in differential input mode.
+    /// Note that this is a blocking operation.
+    pub fn read_mut<PIN>(&mut self, _pin: &mut PIN, samples: &mut[i16]) -> nb::Result<(), ()>
+    where PIN: Channel<Saadc, ID = u8> {
+        match PIN::channel() {
+            0 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input0()),
+            1 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input1()),
+            2 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input2()),
+            3 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input3()),
+            4 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input4()),
+            5 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input5()),
+            6 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input6()),
+            7 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input7()),
+            #[cfg(not(feature = "9160"))]
+            8 => self.0.ch[0].pselp.write(|w| w.pselp().vdd()),
+            #[cfg(any(feature = "52833", feature = "52840"))]
+            13 => self.0.ch[0].pselp.write(|w| w.pselp().vddhdiv5()),
+            // This can never happen the only analog pins have already been defined
+            // PAY CLOSE ATTENTION TO ANY CHANGES TO THIS IMPL OR THE `channel_mappings!` MACRO
+            _ => unsafe { unreachable_unchecked() },
+        }
+
+        if samples.len() >= 1 << 14 {
+            return Err(nb::Error::Other(()));
+        }
+        let nsamples = samples.len() as u16;
+
+        self.0
+            .result
+            .ptr
+            .write(|w| unsafe { w.ptr().bits(samples.as_mut_ptr() as u32) });
+        self.0
+            .result
+            .maxcnt
+            .write(|w| unsafe { w.maxcnt().bits(nsamples) });
+
+        // Conservative compiler fence to prevent starting the ADC before the
+        // pointer and maxcount have been set.
+        compiler_fence(SeqCst);
+
+        self.0.tasks_start.write(|w| unsafe { w.bits(1) });
+        self.0.tasks_sample.write(|w| unsafe { w.bits(1) });
+
+        while self.0.events_end.read().bits() == 0 {}
+        self.0.events_end.reset();
+
+        // Will fail if more than one channel has been enabled.
+        if self.0.result.amount.read().bits() != nsamples as u32 {
+            return Err(nb::Error::Other(()));
+        }
+
+        // Second fence to prevent optimizations creating issues with the EasyDMA-modified `samples`.
+        compiler_fence(SeqCst);
+
+        Ok(())
+    }
 }
 
 /// Used to configure the SAADC peripheral.
@@ -171,56 +229,10 @@ where
 {
     type Error = ();
 
-    /// Sample channel `PIN` for the configured ADC acquisition time in differential input mode.
-    /// Note that this is a blocking operation.
     fn read(&mut self, _pin: &mut PIN) -> nb::Result<i16, Self::Error> {
-        match PIN::channel() {
-            0 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input0()),
-            1 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input1()),
-            2 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input2()),
-            3 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input3()),
-            4 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input4()),
-            5 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input5()),
-            6 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input6()),
-            7 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input7()),
-            #[cfg(not(feature = "9160"))]
-            8 => self.0.ch[0].pselp.write(|w| w.pselp().vdd()),
-            #[cfg(any(feature = "52833", feature = "52840"))]
-            13 => self.0.ch[0].pselp.write(|w| w.pselp().vddhdiv5()),
-            // This can never happen the only analog pins have already been defined
-            // PAY CLOSE ATTENTION TO ANY CHANGES TO THIS IMPL OR THE `channel_mappings!` MACRO
-            _ => unsafe { unreachable_unchecked() },
-        }
-
-        let mut val: i16 = 0;
-        self.0
-            .result
-            .ptr
-            .write(|w| unsafe { w.ptr().bits(((&mut val) as *mut _) as u32) });
-        self.0
-            .result
-            .maxcnt
-            .write(|w| unsafe { w.maxcnt().bits(1) });
-
-        // Conservative compiler fence to prevent starting the ADC before the
-        // pointer and maxcount have been set.
-        compiler_fence(SeqCst);
-
-        self.0.tasks_start.write(|w| unsafe { w.bits(1) });
-        self.0.tasks_sample.write(|w| unsafe { w.bits(1) });
-
-        while self.0.events_end.read().bits() == 0 {}
-        self.0.events_end.reset();
-
-        // Will only occur if more than one channel has been enabled.
-        if self.0.result.amount.read().bits() != 1 {
-            return Err(nb::Error::Other(()));
-        }
-
-        // Second fence to prevent optimizations creating issues with the EasyDMA-modified `val`.
-        compiler_fence(SeqCst);
-
-        Ok(val)
+        let mut samples = [0];
+        self.read_mut(_pin, &mut samples)?;
+        Ok(samples[0])
     }
 }
 
