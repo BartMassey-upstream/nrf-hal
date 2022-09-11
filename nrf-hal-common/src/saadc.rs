@@ -136,16 +136,22 @@ impl Saadc {
             .result
             .maxcnt
             .write(|w| unsafe { w.maxcnt().bits(nsamples) });
+        // XXX 48048.048048048048048 Hz
+        self.0.samplerate.write(|w| unsafe { w.cc().bits(333) });
+        self.0.samplerate.write(|w| w.mode().timers());
+        self.0.events_end.reset();
 
-        // Conservative compiler fence to prevent starting the ADC before the
-        // pointer and maxcount have been set.
+        // Conservative compiler fence to prevent starting the ADC before
+        // the setup has taken.
         compiler_fence(SeqCst);
 
         self.0.tasks_start.write(|w| unsafe { w.bits(1) });
-        self.0.tasks_sample.write(|w| unsafe { w.bits(1) });
 
-        while self.0.events_end.read().bits() == 0 {}
-        self.0.events_end.reset();
+        while self.0.events_end.read().bits() == 0 {
+            if self.0.events_done.read().bits() == 1 {
+                self.0.tasks_sample.write(|w| unsafe { w.bits(1) });
+            }
+        }
 
         // Will fail if more than one channel has been enabled.
         if self.0.result.amount.read().bits() != nsamples as u32 {
