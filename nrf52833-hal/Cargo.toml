@@ -1,6 +1,6 @@
 [package]
 name = "nrf52833-hal"
-version = "0.16.0"
+version = "0.16.1"
 description = "HAL for nRF52833 microcontrollers"
 readme = "../README.md"
 
