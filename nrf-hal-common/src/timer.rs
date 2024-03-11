@@ -146,6 +146,11 @@ where
         self.0.disable_interrupt();
     }
 
+    /// Blocking delay.
+    ///
+    /// This starts this timer as a countdown timer, and
+    /// blocks until the specified number of cycles have
+    /// been counted.
     pub fn delay(&mut self, cycles: u32) {
         self.start(cycles);
         match block!(self.wait()) {
