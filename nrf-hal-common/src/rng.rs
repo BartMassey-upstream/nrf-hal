@@ -20,6 +20,14 @@ impl Rng {
         Self(rng)
     }
 
+    pub fn set_whitening(&mut self, enabled: bool) {
+        if enabled {
+            self.0.config.write(|w| w.dercen().enabled());
+        } else {
+            self.0.config.write(|w| w.dercen().disabled());
+        }
+    }
+
     /// Fill the provided buffer with random bytes.
     ///
     /// Will block until the buffer is full.
