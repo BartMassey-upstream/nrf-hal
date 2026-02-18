@@ -156,6 +156,70 @@ impl Saadc {
 
         Ok(val)
     }
+
+    /// Sample channel `PIN` for the configured ADC acquisition time in differential input mode.
+    /// Note that this is a blocking operation.
+    #[allow(clippy::result_unit_err)]
+    pub fn read_channel_mut<PIN: Channel>(&mut self, _pin: &mut PIN, samples: &mut[i16]) -> Result<(), ()>
+    where PIN: Channel<Saadc, ID = u8> {
+        match PIN::channel() {
+            0 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input0()),
+            1 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input1()),
+            2 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input2()),
+            3 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input3()),
+            4 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input4()),
+            5 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input5()),
+            6 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input6()),
+            7 => self.0.ch[0].pselp.write(|w| w.pselp().analog_input7()),
+            #[cfg(not(feature = "9160"))]
+            8 => self.0.ch[0].pselp.write(|w| w.pselp().vdd()),
+            #[cfg(any(feature = "52833", feature = "52840"))]
+            13 => self.0.ch[0].pselp.write(|w| w.pselp().vddhdiv5()),
+            // This can never happen the only analog pins have already been defined
+            // PAY CLOSE ATTENTION TO ANY CHANGES TO THIS IMPL OR THE `channel_mappings!` MACRO
+            _ => return Err(()),
+        }
+
+        if samples.len() >= 1 << 14 {
+            return Err(());
+        }
+        let nsamples = samples.len() as u16;
+
+        self.0
+            .result
+            .ptr
+            .write(|w| unsafe { w.ptr().bits(samples.as_mut_ptr() as u32) });
+        self.0
+            .result
+            .maxcnt
+            .write(|w| unsafe { w.maxcnt().bits(nsamples) });
+        // XXX 48048.048048048048048 Hz
+        self.0.samplerate.write(|w| unsafe { w.cc().bits(333) });
+        self.0.samplerate.write(|w| w.mode().timers());
+        self.0.events_end.reset();
+
+        // Conservative compiler fence to prevent starting the ADC before
+        // the setup has taken.
+        compiler_fence(SeqCst);
+
+        self.0.tasks_start.write(|w| unsafe { w.bits(1) });
+
+        while self.0.events_end.read().bits() == 0 {
+            if self.0.events_done.read().bits() == 1 {
+                self.0.tasks_sample.write(|w| unsafe { w.bits(1) });
+            }
+        }
+
+        // Will fail if more than one channel has been enabled.
+        if self.0.result.amount.read().bits() != nsamples as u32 {
+            return Err(());
+        }
+
+        // Second fence to prevent optimizations creating issues with the EasyDMA-modified `samples`.
+        compiler_fence(SeqCst);
+
+        Ok(())
+    }
 }
 
 /// Used to configure the SAADC peripheral.
