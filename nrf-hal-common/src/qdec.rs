@@ -3,19 +3,22 @@
 //! The Quadrature decoder (QDEC) provides buffered decoding of quadrature-encoded sensor signals.
 //! It is suitable for mechanical and optical sensors.
 
+use core::marker::PhantomData;
+
 use {
-    crate::gpio::{Input, Pin, PullUp},
+    crate::gpio::{Input, Pin},
     crate::pac::QDEC,
 };
 
 /// A safe wrapper around the `QDEC` peripheral with associated pins.
-pub struct Qdec {
+pub struct Qdec<Q, L> {
     qdec: QDEC,
+    _pins: PhantomData<Pins<Q, L>>,
 }
 
-impl Qdec {
+impl<Q, L> Qdec<Q, L> {
     /// Takes ownership of the `QDEC` peripheral and associated pins, returning a safe wrapper.
-    pub fn new(qdec: QDEC, pins: Pins, sample_period: SamplePeriod) -> Self {
+    pub fn new(qdec: QDEC, pins: Pins<Q, L>, sample_period: SamplePeriod) -> Self {
         qdec.psel.a.write(|w| {
             unsafe { w.bits(pins.a.psel_bits()) };
             w.connect().connected()
@@ -46,7 +49,7 @@ impl Qdec {
             SamplePeriod::_131ms => qdec.sampleper.write(|w| w.sampleper()._131ms()),
         }
 
-        Self { qdec }
+        Self { qdec, _pins: PhantomData }
     }
 
     /// Enables/disables input debounce filters.
@@ -133,7 +136,7 @@ impl Qdec {
 
     /// Consumes `self` and returns back the raw `QDEC` peripheral.
     #[inline]
-    pub fn free(self) -> (QDEC, Pins) {
+    pub fn free(self) -> (QDEC, Pins<Q, L>) {
         let a = unsafe { Pin::from_psel_bits(self.qdec.psel.a.read().bits()) };
         let b = unsafe { Pin::from_psel_bits(self.qdec.psel.b.read().bits()) };
         let led = {
@@ -153,10 +156,10 @@ impl Qdec {
 }
 
 /// Pins for the QDEC
-pub struct Pins {
-    pub a: Pin<Input<PullUp>>,
-    pub b: Pin<Input<PullUp>>,
-    pub led: Option<Pin<Input<PullUp>>>,
+pub struct Pins<QMode, LedMode> {
+    pub a: Pin<Input<QMode>>,
+    pub b: Pin<Input<QMode>>,
+    pub led: Option<Pin<Input<LedMode>>>,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
